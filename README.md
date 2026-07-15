@@ -1,0 +1,83 @@
+# blackjack-sim
+
+Monte Carlo blackjack: basic strategy, Hi-Lo card counting, and MIT-style
+bet sizing — with two learners that derive the strategy and the bet ramp
+from simulation instead of taking them on faith.
+
+Pure Python stdlib. No dependencies. ~75k rounds/sec in CPython.
+
+## Quick start
+
+```bash
+# Full MIT playbook: bet spread + Illustrious 18 deviations + wong out
+python mc.py simulate --shoes 5000 --bet spread --deviations --wong-out -1
+
+# Baseline control: flat-bet basic strategy (should show ~-0.5% edge)
+python mc.py simulate --shoes 5000 --bet flat
+
+# Learn basic strategy from scratch via Monte Carlo control
+python mc.py learn-strategy --episodes 5000000
+
+# Measure edge per true count and derive a Kelly bet ramp from the data
+python mc.py learn-betting --shoes 20000
+
+# Sanity tests
+python tests/test_core.py
+```
+
+## Layout
+
+```
+blackjack/
+  cards.py      int-valued cards & shoe (no suit/face objects — MC speed)
+  rules.py      table rules (6D, S17, DAS, 3:2, 75% pen by default)
+  counting.py   Hi-Lo running count -> true count (per remaining deck)
+  strategy.py   book basic strategy + Illustrious 18 + insurance index
+  betting.py    flat / spread ramp / fractional Kelly, wong-out support
+  engine.py     print-free simulation loop, per-round records
+  stats.py      EV, variance, edge-by-TC, risk of ruin, Kelly ramp fit
+  learn.py      MC control (learn strategy) + bet-ramp estimation
+mc.py           CLI: simulate | learn-strategy | learn-betting
+legacy/BJ.py    original simulator, kept for reference
+tests/          sanity tests (hand math, indices, known-edge check)
+```
+
+## What changed vs. legacy/BJ.py
+
+1. **True count fixed.** The legacy code accumulated a running count but
+   used it as a true count. Bet ramps and index plays are calibrated to
+   running count *per remaining deck*; without the division the bet
+   trigger fires on the wrong signal. `HiLoCounter.true_count()` divides
+   by decks remaining.
+2. **Play deviations added.** Counting only moved the legacy bet, never
+   the play. The Illustrious 18 index plays plus insurance at TC >= +3
+   are where a large share of a counter's edge lives; both are in
+   `strategy.py` behind `--deviations`.
+3. **MIT-style bet sizing.** `SpreadBet` (discrete 1-12 unit ramp),
+   `KellyBet` (bankroll-fraction, half-Kelly default), and wong-out —
+   while sat out, the engine still burns cards so the count keeps evolving.
+4. **Hot path stripped.** No prints, no card objects, no numpy (the
+   `Aces()` permutation table is replaced by a 3-line ace demotion loop).
+   Result: ~75k rounds/sec, enough for tight confidence intervals.
+5. **Rule/payout bugs fixed.** Doubled busts now settle as double losses
+   (legacy tagged them `Result(2)`/DDWIN); 21 after a split is no longer
+   paid as a natural; split aces receive one card; dealer peek and
+   insurance are modeled.
+6. **Learning, not just replay.** `learn-strategy` runs first-visit MC
+   control (epsilon-greedy, tabular Q) and diffs the learned policy
+   against the book — agreement climbs with episodes and the stragglers
+   are the near-EV-tie soft doubles, as expected. `learn-betting`
+   measures realized edge per true-count bucket and fits a
+   Kelly-proportional ramp, reproducing the count->bet card from data.
+
+## Reference numbers (seeded runs, 6D S17 DAS 75% pen)
+
+| Configuration                          | Edge (% of action) |
+|----------------------------------------|--------------------|
+| Flat bet, basic strategy               | ~ -0.5%            |
+| Spread 1-12, no deviations             | ~ +0.5 to +1.0%    |
+| Spread 1-12 + I18 + wong out at TC<-1  | ~ +1.0 to +1.5%    |
+
+Risk-of-ruin output uses the diffusion approximation
+`exp(-2 * EV * bankroll / variance)`; treat it as a planning number, not
+a guarantee.
