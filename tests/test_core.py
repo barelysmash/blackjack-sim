@@ -63,6 +63,29 @@ def test_wong_out_burns_rounds():
     assert res.rounds == 0 and res.wonged_out > 0
 
 
+def test_h17_adjustments():
+    s17 = BasicStrategy()
+    h17 = BasicStrategy(h17=True)
+    assert s17.decide([6, 5], 11, True, False) == "H"    # 11 v A: hit (S17)
+    assert h17.decide([6, 5], 11, True, False) == "D"    # 11 v A: double (H17)
+    assert s17.decide([11, 7], 2, True, False) == "S"    # soft 18 v 2 (S17)
+    assert h17.decide([11, 7], 2, True, False) == "D"    # soft 18 v 2 (H17)
+    assert h17.decide([11, 8], 6, True, False) == "D"    # soft 19 v 6 (H17)
+    assert h17.decide([11, 8], 6, False, False) == "S"   # Ds fallback
+
+
+def test_plot_outputs(tmp_dir="/tmp"):
+    import os
+    from blackjack.plot import write_csv, write_svg
+    sim = Simulator(Rules(), BasicStrategy(), FlatBet(), seed=2)
+    res = sim.run(20, bankroll=1e6, min_bet=25.0, stop_on_ruin=False)
+    csv_p, svg_p = os.path.join(tmp_dir, "bj.csv"), os.path.join(tmp_dir, "bj.svg")
+    write_csv(res.records, csv_p)
+    write_svg(res.records, svg_p, start_bankroll=1e6)
+    assert open(csv_p).readline().startswith("round,")
+    assert open(svg_p).read().lstrip().startswith("<svg")
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

@@ -21,6 +21,13 @@ python mc.py learn-strategy --episodes 5000000
 # Measure edge per true count and derive a Kelly bet ramp from the data
 python mc.py learn-betting --shoes 20000
 
+# S17 vs H17 rule cost, same seed and bet sizer
+python mc.py --seed 42 compare --shoes 40000 --bet flat
+
+# Bankroll trajectory chart (SVG, open in a browser) + per-round CSV
+python mc.py --seed 42 simulate --shoes 3000 --bet kelly --deviations \
+    --wong-out -1 --bankroll 50000 --plot bankroll.svg --csv rounds.csv
+
 # Sanity tests
 python tests/test_core.py
 ```
@@ -37,7 +44,8 @@ blackjack/
   engine.py     print-free simulation loop, per-round records
   stats.py      EV, variance, edge-by-TC, risk of ruin, Kelly ramp fit
   learn.py      MC control (learn strategy) + bet-ramp estimation
-mc.py           CLI: simulate | learn-strategy | learn-betting
+  plot.py       bankroll trajectory -> CSV / stdlib SVG chart
+mc.py           CLI: simulate | compare | learn-strategy | learn-betting
 legacy/BJ.py    original simulator, kept for reference
 tests/          sanity tests (hand math, indices, known-edge check)
 ```
@@ -77,6 +85,11 @@ tests/          sanity tests (hand math, indices, known-edge check)
 | Flat bet, basic strategy               | ~ -0.5%            |
 | Spread 1-12, no deviations             | ~ +0.5 to +1.0%    |
 | Spread 1-12 + I18 + wong out at TC<-1  | ~ +1.0 to +1.5%    |
+| H17 rule change (vs S17 baseline)      | ~ -0.25% penalty   |
+
+`BasicStrategy(h17=True)` applies the standard H17 chart changes (11 vs A
+double, soft 18 vs 2 double, soft 19 vs 6 double); `compare` runs both
+games on the same seed with the matching chart.
 
 Risk-of-ruin output uses the diffusion approximation
 `exp(-2 * EV * bankroll / variance)`; treat it as a planning number, not
