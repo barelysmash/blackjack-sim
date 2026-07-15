@@ -74,9 +74,11 @@ def test_h17_adjustments():
     assert h17.decide([11, 8], 6, False, False) == "S"   # Ds fallback
 
 
-def test_plot_outputs(tmp_dir="/tmp"):
+def test_plot_outputs():
     import os
+    import tempfile
     from blackjack.plot import write_csv, write_svg
+    tmp_dir = tempfile.gettempdir()
     sim = Simulator(Rules(), BasicStrategy(), FlatBet(), seed=2)
     res = sim.run(20, bankroll=1e6, min_bet=25.0, stop_on_ruin=False)
     csv_p, svg_p = os.path.join(tmp_dir, "bj.csv"), os.path.join(tmp_dir, "bj.svg")
