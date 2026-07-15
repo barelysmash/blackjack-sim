@@ -88,6 +88,30 @@ def test_plot_outputs():
     assert open(svg_p).read().lstrip().startswith("<svg")
 
 
+def test_stratified_shoe_count_consistency():
+    from blackjack.counting import _HILO
+    from blackjack.learn import MCDeviationLearner
+    learner = MCDeviationLearner(seed=9)
+    for _ in range(50):
+        shoe, running = learner._stratified_shoe()
+        # Removed cards' Hi-Lo tags must sum to the reported running count.
+        full = {v: 4 * 6 for v in range(2, 12)}
+        full[10] = 16 * 6
+        removed_sum = 0
+        for v in range(2, 12):
+            removed_sum += (full[v] - shoe.count(v)) * _HILO[v]
+        assert removed_sum == running
+        assert 52 <= len(shoe) <= 6 * 52
+
+
+def test_deviation_learner_smoke():
+    from blackjack.learn import MCDeviationLearner
+    learner = MCDeviationLearner(seed=9)
+    learner.train(5_000)
+    assert learner.episodes == 5_000
+    assert len(learner.index_report()) > 10   # header + 16 cells
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

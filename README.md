@@ -21,6 +21,9 @@ python mc.py learn-strategy --episodes 5000000
 # Measure edge per true count and derive a Kelly bet ramp from the data
 python mc.py learn-betting --shoes 20000
 
+# Learn the Illustrious 18 index plays from scratch (overnight-scale run)
+python mc.py learn-deviations --episodes 100000000
+
 # S17 vs H17 rule cost, same seed and bet sizer
 python mc.py --seed 42 compare --shoes 40000 --bet flat
 
@@ -77,6 +80,14 @@ tests/          sanity tests (hand math, indices, known-edge check)
    are the near-EV-tie soft doubles, as expected. `learn-betting`
    measures realized edge per true-count bucket and fits a
    Kelly-proportional ramp, reproducing the count->bet card from data.
+   `learn-deviations` closes the loop: MC control with the true count in
+   the state, dealt from count-stratified shoes (extreme counts are rare
+   in nature, so shoes are constructed to target running counts and the
+   count then evolves honestly within them). With enough episodes the
+   greedy action flips at the book index — the Illustrious 18 derived
+   from payouts alone. At ~12M episodes several indices land exactly
+   (12v3 at +2, 10vT at +4, 12v4 at 0); doubling indices resolve slowest
+   (double variance, thin EV gaps) and want 100M+ episodes.
 
 ## Reference numbers (seeded runs, 6D S17 DAS 75% pen)
 

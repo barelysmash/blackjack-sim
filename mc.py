@@ -152,6 +152,28 @@ def cmd_learn_betting(args) -> None:
         print(f"  TC {tc:+d}: {units:g}")
 
 
+def cmd_learn_deviations(args) -> None:
+    from blackjack.learn import MCDeviationLearner
+    learner = MCDeviationLearner(_rules(args), seed=args.seed)
+    t0 = time.time()
+    step = max(args.episodes // 10, 1)
+    done = 0
+    while done < args.episodes:
+        n = min(step, args.episodes - done)
+        learner.train(n)
+        done += n
+        row = learner.cell_actions(16, 10)
+        acts = " ".join(a for _, a, _ in row)
+        print(f"episodes {done:>12,}  eps={learner.epsilon:.3f}  "
+              f"hard 16 vs T by TC [{learner.tc_min}..{learner.tc_max}]: {acts}")
+    print(f"\ndone in {time.time()-t0:.0f}s — learned index plays vs book:\n")
+    for line in learner.index_report():
+        print(line)
+    print("\nNote: doubling indices (9v2, 10vT, 11vA, ...) and negative-index")
+    print("stands are the slowest to resolve; disagreements at low n are")
+    print("sampling noise, not engine error. More episodes tightens them.")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -193,6 +215,11 @@ def main() -> None:
     pb = sub.add_parser("learn-betting")
     pb.add_argument("--shoes", type=int, default=5_000)
     pb.set_defaults(func=cmd_learn_betting)
+
+    pd = sub.add_parser("learn-deviations",
+                        help="learn Illustrious 18 index plays from scratch")
+    pd.add_argument("--episodes", type=int, default=20_000_000)
+    pd.set_defaults(func=cmd_learn_deviations)
 
     args = p.parse_args()
     args.func(args)
