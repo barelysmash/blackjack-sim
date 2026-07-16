@@ -42,7 +42,8 @@ def _betting(args):
         return FlatBet()
     if args.bet == "spread":
         return SpreadBet(wong_out_below=args.wong_out)
-    return KellyBet(wong_out_below=args.wong_out)
+    return KellyBet(fraction=getattr(args, "kelly_fraction", 0.5),
+                    wong_out_below=args.wong_out)
 
 
 def cmd_simulate(args) -> None:
@@ -189,7 +190,7 @@ def cmd_team(args) -> None:
     from blackjack.team import TeamSimulator
 
     if args.bet == "kelly":
-        bp_bet = KellyBet(fraction=0.5, max_units=args.max_units)
+        bp_bet = KellyBet(fraction=args.kelly_fraction, max_units=args.max_units)
     else:
         bp_bet = SpreadBet()
     team = TeamSimulator(
@@ -248,6 +249,8 @@ def main() -> None:
     ps.add_argument("--bankroll", type=float, default=10_000)
     ps.add_argument("--min-bet", type=float, default=25)
     ps.add_argument("--bet", choices=["flat", "spread", "kelly"], default="spread")
+    ps.add_argument("--kelly-fraction", type=float, default=0.5,
+                    help="Kelly fraction for --bet kelly (0.5 = half-Kelly)")
     ps.add_argument("--deviations", action="store_true",
                     help="apply Illustrious 18 index plays + insurance index")
     ps.add_argument("--wong-out", type=float, default=None,
@@ -294,6 +297,8 @@ def main() -> None:
     pt.add_argument("--bankroll", type=float, default=100_000)
     pt.add_argument("--min-bet", type=float, default=25)
     pt.add_argument("--bet", choices=["kelly", "spread"], default="kelly")
+    pt.add_argument("--kelly-fraction", type=float, default=0.5,
+                    help="BP Kelly fraction (0.5 = half-Kelly, 1.0 = full)")
     pt.add_argument("--max-units", type=float, default=20)
     pt.add_argument("--plot", type=str, default=None)
     pt.set_defaults(func=cmd_team)
