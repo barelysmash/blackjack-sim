@@ -60,7 +60,7 @@ SOFT: List[List[str]] = [
     [H, H, D, D, D, H, H, H, H, H],   # A,4 (15)
     [H, H, D, D, D, H, H, H, H, H],   # A,5 (16)
     [H, D, D, D, D, H, H, H, H, H],   # A,6 (17)
-    [DS, DS, DS, DS, DS, S, S, H, H, H],  # A,7 (18)
+    [S, DS, DS, DS, DS, S, S, H, H, H],   # A,7 (18)
     [S, S, S, S, S, S, S, S, S, S],   # A,8 (19)
     [S, S, S, S, S, S, S, S, S, S],   # A,9 (20)
 ]
@@ -107,11 +107,18 @@ INSURANCE_INDEX = 3.0           # take insurance at TC >= +3
 
 
 class BasicStrategy:
-    """Book basic strategy; optionally applies count deviations."""
+    """Book basic strategy; optionally applies count deviations.
 
-    def __init__(self, use_deviations: bool = False, split_tens: bool = False):
+    ``h17=True`` applies the three standard multi-deck chart changes for
+    a dealer who hits soft 17: hard 11 vs A doubles, soft 18 vs 2
+    doubles, soft 19 vs 6 doubles.
+    """
+
+    def __init__(self, use_deviations: bool = False, split_tens: bool = False,
+                 h17: bool = False):
         self.use_deviations = use_deviations
         self.split_tens = split_tens
+        self.h17 = h17
 
     def take_insurance(self, true_count: float) -> bool:
         return self.use_deviations and true_count >= INSURANCE_INDEX
@@ -139,6 +146,10 @@ class BasicStrategy:
                 if idx is not None and true_count >= idx:
                     return P
             dev = DEVIATIONS.get((total, dealer_up))
+            # Under H17 the book play for 11 vs A is already double, so the
+            # S17-calibrated index (hit below TC +1) must not apply.
+            if self.h17 and (total, dealer_up) == (11, 11):
+                dev = None
             if dev is not None and not (is_pair and cards[0] != 5):
                 idx, hi, lo = dev
                 action = hi if true_count >= idx else lo
@@ -155,6 +166,15 @@ class BasicStrategy:
                     action = S
             else:
                 action = HARD[total - 5][col]
+
+        # H17 chart adjustments (skip pairs; 5,5 as hard 10 is unaffected).
+        if self.h17 and not is_pair:
+            if not soft and total == 11 and dealer_up == 11 and action == H:
+                action = D
+            elif soft and total == 18 and dealer_up == 2 and action == S:
+                action = DS
+            elif soft and total == 19 and dealer_up == 6 and action == S:
+                action = DS
 
         # Resolve legality fallbacks.
         if action == P and not can_split:

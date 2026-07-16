@@ -21,6 +21,16 @@ python mc.py learn-strategy --episodes 5000000
 # Measure edge per true count and derive a Kelly bet ramp from the data
 python mc.py learn-betting --shoes 20000
 
+# Learn the Illustrious 18 index plays from scratch (overnight-scale run)
+python mc.py learn-deviations --episodes 100000000
+
+# S17 vs H17 rule cost, same seed and bet sizer
+python mc.py --seed 42 compare --shoes 40000 --bet flat
+
+# Bankroll trajectory chart (SVG, open in a browser) + per-round CSV
+python mc.py --seed 42 simulate --shoes 3000 --bet kelly --deviations \
+    --wong-out -1 --bankroll 50000 --plot bankroll.svg --csv rounds.csv
+
 # Sanity tests
 python tests/test_core.py
 ```
@@ -37,7 +47,8 @@ blackjack/
   engine.py     print-free simulation loop, per-round records
   stats.py      EV, variance, edge-by-TC, risk of ruin, Kelly ramp fit
   learn.py      MC control (learn strategy) + bet-ramp estimation
-mc.py           CLI: simulate | learn-strategy | learn-betting
+  plot.py       bankroll trajectory -> CSV / stdlib SVG chart
+mc.py           CLI: simulate | compare | learn-strategy | learn-betting
 legacy/BJ.py    original simulator, kept for reference
 tests/          sanity tests (hand math, indices, known-edge check)
 ```
@@ -69,6 +80,14 @@ tests/          sanity tests (hand math, indices, known-edge check)
    are the near-EV-tie soft doubles, as expected. `learn-betting`
    measures realized edge per true-count bucket and fits a
    Kelly-proportional ramp, reproducing the count->bet card from data.
+   `learn-deviations` closes the loop: MC control with the true count in
+   the state, dealt from count-stratified shoes (extreme counts are rare
+   in nature, so shoes are constructed to target running counts and the
+   count then evolves honestly within them). With enough episodes the
+   greedy action flips at the book index — the Illustrious 18 derived
+   from payouts alone. At ~12M episodes several indices land exactly
+   (12v3 at +2, 10vT at +4, 12v4 at 0); doubling indices resolve slowest
+   (double variance, thin EV gaps) and want 100M+ episodes.
 
 ## Reference numbers (seeded runs, 6D S17 DAS 75% pen)
 
@@ -77,6 +96,11 @@ tests/          sanity tests (hand math, indices, known-edge check)
 | Flat bet, basic strategy               | ~ -0.5%            |
 | Spread 1-12, no deviations             | ~ +0.5 to +1.0%    |
 | Spread 1-12 + I18 + wong out at TC<-1  | ~ +1.0 to +1.5%    |
+| H17 rule change (vs S17 baseline)      | ~ -0.25% penalty   |
+
+`BasicStrategy(h17=True)` applies the standard H17 chart changes (11 vs A
+double, soft 18 vs 2 double, soft 19 vs 6 double); `compare` runs both
+games on the same seed with the matching chart.
 
 Risk-of-ruin output uses the diffusion approximation
 `exp(-2 * EV * bankroll / variance)`; treat it as a planning number, not

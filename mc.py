@@ -23,6 +23,7 @@ import time
 from blackjack.betting import FlatBet, KellyBet, SpreadBet
 from blackjack.engine import Simulator
 from blackjack.learn import MCStrategyLearner, learn_bet_ramp
+from blackjack.plot import write_csv, write_svg
 from blackjack.rules import Rules
 from blackjack.stats import by_true_count, risk_of_ruin, summarize
 from blackjack.strategy import BasicStrategy
@@ -36,15 +37,18 @@ def _rules(args) -> Rules:
     )
 
 
+def _betting(args):
+    if args.bet == "flat":
+        return FlatBet()
+    if args.bet == "spread":
+        return SpreadBet(wong_out_below=args.wong_out)
+    return KellyBet(wong_out_below=args.wong_out)
+
+
 def cmd_simulate(args) -> None:
     rules = _rules(args)
-    strategy = BasicStrategy(use_deviations=args.deviations)
-    if args.bet == "flat":
-        betting = FlatBet()
-    elif args.bet == "spread":
-        betting = SpreadBet(wong_out_below=args.wong_out)
-    else:
-        betting = KellyBet(wong_out_below=args.wong_out)
+    strategy = BasicStrategy(use_deviations=args.deviations, h17=args.h17)
+    betting = _betting(args)
 
     sim = Simulator(rules, strategy, betting, seed=args.seed)
     t0 = time.time()
@@ -71,6 +75,50 @@ def cmd_simulate(args) -> None:
     print("\nedge by true count (at bet time):")
     for tc, v in by_true_count(res.records).items():
         print(f"  TC {tc:+d}: {v['edge_pct']:+7.3f}%   (n={v['rounds']:,})")
+
+    if args.csv:
+        write_csv(res.records, args.csv)
+        print(f"\nwrote {args.csv}")
+    if args.plot:
+        rule = "H17" if args.h17 else "S17"
+        write_svg(
+            res.records, args.plot,
+            title=f"Bankroll — {args.bet}"
+                  + (" + I18" if args.deviations else "")
+                  + f", {args.decks}D {rule}",
+            start_bankroll=args.bankroll,
+        )
+        print(f"wrote {args.plot} (open in a browser)")
+
+
+def cmd_compare(args) -> None:
+    """Same seed, same bet sizer: S17 vs H17 side by side.
+
+    The edge is measured with an unconstrained bankroll (otherwise a ruin
+    truncates the sample and caps how much data a longer run can add);
+    risk of ruin is then computed analytically for --bankroll.
+    """
+    rows = []
+    for label, s17 in (("S17", True), ("H17", False)):
+        rules = Rules(num_decks=args.decks, dealer_stands_soft_17=s17,
+                      penetration=args.penetration)
+        strategy = BasicStrategy(use_deviations=args.deviations, h17=not s17)
+        sim = Simulator(rules, strategy, _betting(args), seed=args.seed)
+        res = sim.run(args.shoes, bankroll=1e12,
+                      min_bet=args.min_bet, stop_on_ruin=False)
+        s = summarize(res.records, args.min_bet)
+        ror = risk_of_ruin(s["ev_per_round"], s["sd_per_round"], args.bankroll)
+        rows.append((label, s, ror))
+
+    hdr = f"{'':6s}{'rounds':>10s}{'edge %':>9s}{'EV/round':>11s}{'±95%':>8s}{'total net $':>13s}{'RoR %':>8s}"
+    print(hdr)
+    for label, s, ror in rows:
+        print(f"{label:6s}{s['rounds']:>10,}{s['edge_pct_of_action']:>+9.3f}"
+              f"{s['ev_per_round']:>+11.3f}{1.96*s['se_ev']:>8.3f}"
+              f"{s['total_net']:>13,.0f}{100*ror:>8.1f}")
+    d = rows[1][1]["edge_pct_of_action"] - rows[0][1]["edge_pct_of_action"]
+    print(f"\nH17 rule cost: {d:+.3f}% of action "
+          f"(book value is roughly -0.2%; RoR is for a ${args.bankroll:,.0f} bankroll)")
 
 
 def cmd_learn_strategy(args) -> None:
@@ -104,6 +152,28 @@ def cmd_learn_betting(args) -> None:
         print(f"  TC {tc:+d}: {units:g}")
 
 
+def cmd_learn_deviations(args) -> None:
+    from blackjack.learn import MCDeviationLearner
+    learner = MCDeviationLearner(_rules(args), seed=args.seed)
+    t0 = time.time()
+    step = max(args.episodes // 10, 1)
+    done = 0
+    while done < args.episodes:
+        n = min(step, args.episodes - done)
+        learner.train(n)
+        done += n
+        row = learner.cell_actions(16, 10)
+        acts = " ".join(a for _, a, _ in row)
+        print(f"episodes {done:>12,}  eps={learner.epsilon:.3f}  "
+              f"hard 16 vs T by TC [{learner.tc_min}..{learner.tc_max}]: {acts}")
+    print(f"\ndone in {time.time()-t0:.0f}s — learned index plays vs book:\n")
+    for line in learner.index_report():
+        print(line)
+    print("\nNote: doubling indices (9v2, 10vT, 11vA, ...) and negative-index")
+    print("stands are the slowest to resolve; disagreements at low n are")
+    print("sampling noise, not engine error. More episodes tightens them.")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -123,7 +193,20 @@ def main() -> None:
     ps.add_argument("--wong-out", type=float, default=None,
                     help="sit out when true count is below this value")
     ps.add_argument("--no-ruin-stop", action="store_true")
+    ps.add_argument("--csv", type=str, default=None,
+                    help="write per-round trajectory to this CSV path")
+    ps.add_argument("--plot", type=str, default=None,
+                    help="write bankroll trajectory SVG to this path")
     ps.set_defaults(func=cmd_simulate)
+
+    pc = sub.add_parser("compare", help="S17 vs H17, same seed and bet sizer")
+    pc.add_argument("--shoes", type=int, default=5_000)
+    pc.add_argument("--bankroll", type=float, default=10_000)
+    pc.add_argument("--min-bet", type=float, default=25)
+    pc.add_argument("--bet", choices=["flat", "spread", "kelly"], default="flat")
+    pc.add_argument("--deviations", action="store_true")
+    pc.add_argument("--wong-out", type=float, default=None)
+    pc.set_defaults(func=cmd_compare)
 
     pl = sub.add_parser("learn-strategy")
     pl.add_argument("--episodes", type=int, default=1_000_000)
@@ -132,6 +215,11 @@ def main() -> None:
     pb = sub.add_parser("learn-betting")
     pb.add_argument("--shoes", type=int, default=5_000)
     pb.set_defaults(func=cmd_learn_betting)
+
+    pd = sub.add_parser("learn-deviations",
+                        help="learn Illustrious 18 index plays from scratch")
+    pd.add_argument("--episodes", type=int, default=20_000_000)
+    pd.set_defaults(func=cmd_learn_deviations)
 
     args = p.parse_args()
     args.func(args)

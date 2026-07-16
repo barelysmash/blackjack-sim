@@ -63,6 +63,55 @@ def test_wong_out_burns_rounds():
     assert res.rounds == 0 and res.wonged_out > 0
 
 
+def test_h17_adjustments():
+    s17 = BasicStrategy()
+    h17 = BasicStrategy(h17=True)
+    assert s17.decide([6, 5], 11, True, False) == "H"    # 11 v A: hit (S17)
+    assert h17.decide([6, 5], 11, True, False) == "D"    # 11 v A: double (H17)
+    assert s17.decide([11, 7], 2, True, False) == "S"    # soft 18 v 2 (S17)
+    assert h17.decide([11, 7], 2, True, False) == "D"    # soft 18 v 2 (H17)
+    assert h17.decide([11, 8], 6, True, False) == "D"    # soft 19 v 6 (H17)
+    assert h17.decide([11, 8], 6, False, False) == "S"   # Ds fallback
+
+
+def test_plot_outputs():
+    import os
+    import tempfile
+    from blackjack.plot import write_csv, write_svg
+    tmp_dir = tempfile.gettempdir()
+    sim = Simulator(Rules(), BasicStrategy(), FlatBet(), seed=2)
+    res = sim.run(20, bankroll=1e6, min_bet=25.0, stop_on_ruin=False)
+    csv_p, svg_p = os.path.join(tmp_dir, "bj.csv"), os.path.join(tmp_dir, "bj.svg")
+    write_csv(res.records, csv_p)
+    write_svg(res.records, svg_p, start_bankroll=1e6)
+    assert open(csv_p).readline().startswith("round,")
+    assert open(svg_p).read().lstrip().startswith("<svg")
+
+
+def test_stratified_shoe_count_consistency():
+    from blackjack.counting import _HILO
+    from blackjack.learn import MCDeviationLearner
+    learner = MCDeviationLearner(seed=9)
+    for _ in range(50):
+        shoe, running = learner._stratified_shoe()
+        # Removed cards' Hi-Lo tags must sum to the reported running count.
+        full = {v: 4 * 6 for v in range(2, 12)}
+        full[10] = 16 * 6
+        removed_sum = 0
+        for v in range(2, 12):
+            removed_sum += (full[v] - shoe.count(v)) * _HILO[v]
+        assert removed_sum == running
+        assert 52 <= len(shoe) <= 6 * 52
+
+
+def test_deviation_learner_smoke():
+    from blackjack.learn import MCDeviationLearner
+    learner = MCDeviationLearner(seed=9)
+    learner.train(5_000)
+    assert learner.episodes == 5_000
+    assert len(learner.index_report()) > 10   # header + 16 cells
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
