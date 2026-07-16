@@ -87,7 +87,14 @@ tests/          sanity tests (hand math, indices, known-edge check)
    greedy action flips at the book index — the Illustrious 18 derived
    from payouts alone. At ~12M episodes several indices land exactly
    (12v3 at +2, 10vT at +4, 12v4 at 0); doubling indices resolve slowest
-   (double variance, thin EV gaps) and want 100M+ episodes.
+   (double variance, thin EV gaps). The `--refine-pairs` pass then fixes
+   the residual on-policy bias (exploration contaminates continuation
+   actions, flattering terminal ones): it freezes the learned policy and
+   directly measures the paired EV difference between the candidate
+   actions from shared shoes, per cell per bucket, conditioned on the
+   dealer peek. Zero-crossing = learned index. 12/16 indices land within
+   one bucket of book at 4M episodes + 12k pairs; '?'-flagged cells have
+   gaps thinner than 2 SE and want more pairs.
 
 ## Reference numbers (seeded runs, 6D S17 DAS 75% pen)
 

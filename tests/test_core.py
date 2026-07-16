@@ -112,6 +112,17 @@ def test_deviation_learner_smoke():
     assert len(learner.index_report()) > 10   # header + 16 cells
 
 
+def test_index_resolver_smoke():
+    from blackjack.learn import IndexResolver, MCDeviationLearner
+    learner = MCDeviationLearner(seed=11)
+    learner.train(20_000)
+    resolver = IndexResolver(learner)
+    table = resolver.resolve_cell(16, 10, "S", pairs=200)
+    assert table, "no buckets resolved"
+    for b, (mean, n, se) in table.items():
+        assert -2.0 <= mean <= 2.0 and n > 0 and se >= 0
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):
