@@ -445,3 +445,230 @@ class MCDeviationLearner:
                 else "learned: no clean flip yet"
             lines.append(f"hard {total:2d} vs {up:2d}:  {acts}   {book}; {learned}")
         return lines
+
+
+# ---------------------------------------------------------------------------
+# Greedy-evaluation refinement: paired index resolver.
+# ---------------------------------------------------------------------------
+
+
+class IndexResolver:
+    """Refine learned index plays by direct paired EV measurement.
+
+    On-policy epsilon-greedy MC control converges to the value of the
+    *exploring* policy: hitting leads to more decisions, each carrying an
+    epsilon chance of a random blunder, so continuation actions are
+    undervalued relative to terminal ones (stand/double) and learned flip
+    points skew low. This resolver removes that bias:
+
+    * the trained learner's policy is frozen and followed greedily
+      (epsilon = 0) for all continuation decisions;
+    * for each Illustrious 18 cell and each true-count bucket, the exact
+      hand is forced and BOTH candidate actions are played out from the
+      same shuffled shoe (common random numbers), conditioned on the
+      dealer peek showing no blackjack — the actual decision context;
+    * the reported quantity is the paired mean of net(hi) - net(lo) per
+      bucket. The learned index is where that difference crosses zero.
+
+    The pairing cancels most shoe-composition variance, so a few tens of
+    thousands of pairs per bucket resolves EV gaps of a few hundredths
+    of a percent — gaps blanket MC needs hundreds of millions of
+    episodes to see.
+    """
+
+    def __init__(self, learner: MCDeviationLearner):
+        self.learner = learner
+        self.rules = learner.rules
+        self.rng = learner.rng
+
+    # -- frozen greedy continuation -------------------------------------
+    def _greedy(self, cards: List[int], up: int, bucket: int,
+                min_n: int = 100) -> str:
+        """Continuation action from the learner's Q, gated for robustness.
+
+        The trained Q is trusted only where BOTH actions have real sample
+        mass; otherwise fall back to the bust-safe default (stand 17+).
+        Without the gate, a state whose only visited action is 'hit'
+        (e.g. hard 20 in a sparse bucket) makes the hit arm self-destruct,
+        systematically flattering the terminal arm it's paired against.
+        """
+        total, soft = hand_total(cards)
+        kind = "soft" if soft else "hard"
+        s: CState = (kind, total, up, bucket)
+        default = "S" if total >= 17 else "H"
+        other = "H" if default == "S" else "S"
+        L = self.learner
+        if (L.q_n[(s, "H")] >= min_n and L.q_n[(s, "S")] >= min_n
+                and L.q(s, other) > L.q(s, default)):
+            return other
+        return default
+
+    # -- forced-hand setup ------------------------------------------------
+    def _partial_shuffle(self, shoe: List[int], k: int = 40) -> None:
+        """Freshen the draw order cheaply: Fisher-Yates over the last k
+        positions (the only cards a pair can consume), each swapped with
+        a uniformly random position in the whole shoe."""
+        rng = self.rng
+        n = len(shoe)
+        for i in range(n - 1, max(n - 1 - k, 0), -1):
+            j = rng.randrange(0, i + 1)
+            shoe[i], shoe[j] = shoe[j], shoe[i]
+
+    def _setup_from(self, base: List[int], base_running: int,
+                    total: int, up: int) -> Tuple[List[int], List[int], int] | None:
+        """Copy the base shoe, freshen its tail, force the cell's cards,
+        ensure a non-blackjack hole. Returns (shoe, player, running)."""
+        shoe = list(base)
+        self._partial_shuffle(shoe)
+        running = base_running
+        c1 = self.rng.randint(max(2, total - 10), min(10, total - 2))
+        c2 = total - c1
+        for c in (c1, c2, up):
+            try:
+                shoe.remove(c)
+            except ValueError:
+                return None
+            running += _HILO[c]
+        if not shoe:
+            return None
+        # Dealer peek: condition on no blackjack. The BJ-making hole is
+        # swapped with a uniformly random eligible position — swapping
+        # with a nearby card would park a ten right where the next draw
+        # comes from, enriching first draws with tens and biasing both
+        # arms (this exact bug produced +27% phantom doubling deltas).
+        if up >= 10 and shoe[-1] + up == 21:
+            eligible = [j for j in range(len(shoe) - 1) if shoe[j] + up != 21]
+            if not eligible:
+                return None
+            j = self.rng.choice(eligible)
+            shoe[-1], shoe[j] = shoe[j], shoe[-1]
+        return shoe, [c1, c2], running
+
+    def _finish(self, cards: List[int], bet: float, shoe: List[int],
+                up: int, hole: int, running: int) -> float:
+        """Dealer plays; settle one hand."""
+        r = self.rules
+        total, _ = hand_total(cards)
+        if total > 21:
+            return -bet
+        dealer = [up, hole]
+        while True:
+            dt, soft = hand_total(dealer)
+            if dt > 21 or dt > 17:
+                break
+            if dt == 17 and (r.dealer_stands_soft_17 or not soft):
+                break
+            dealer.append(shoe.pop())
+        dt, _ = hand_total(dealer)
+        if dt > 21 or total > dt:
+            return bet
+        if total < dt:
+            return -bet
+        return 0.0
+
+    def _play_arm(self, action: str, player: List[int], shoe: List[int],
+                  up: int, running: int, bucket: int) -> float:
+        """Play one candidate action, then frozen-greedy to completion."""
+        cards = list(player)
+        shoe = list(shoe)                 # each arm consumes its own copy
+        hole = shoe.pop()
+        bet = 1.0
+        run = running
+
+        def draw() -> int:
+            nonlocal run
+            c = shoe.pop()
+            run += _HILO[c]
+            return c
+
+        if action == "D":
+            bet = 2.0
+            cards.append(draw())
+        elif action == "H":
+            cards.append(draw())
+            while True:
+                total, _ = hand_total(cards)
+                if total >= 21:
+                    break
+                b = self.learner._bucket(run / max(len(shoe) / 52.0, 0.5))
+                if self._greedy(cards, up, b) != "H":
+                    break
+                cards.append(draw())
+        # "S": no cards drawn.
+        return self._finish(cards, bet, shoe, up, hole, run)
+
+    # -- resolution --------------------------------------------------------
+    def resolve_cell(self, total: int, up: int, hi: str,
+                     pairs: int) -> Dict[int, Tuple[float, int, float]]:
+        """Per realized bucket: (mean paired delta net(hi)-net(H), n, SE)."""
+        sums: Dict[int, float] = defaultdict(float)
+        sq: Dict[int, float] = defaultdict(float)
+        ns: Dict[int, int] = defaultdict(int)
+        L = self.learner
+        target = pairs * (L.tc_max - L.tc_min + 1)
+        done = 0
+        base: List[int] = []
+        base_running = 0
+        since_rebuild = 0
+        while done < target:
+            if not base or since_rebuild >= 50:
+                base, base_running = L._stratified_shoe()
+                since_rebuild = 0
+            since_rebuild += 1
+            setup = self._setup_from(base, base_running, total, up)
+            done += 1                     # count attempts: no infinite loops
+            if setup is None:
+                since_rebuild = 50        # infeasible base; force rebuild
+                continue
+            shoe, player, running = setup
+            b = L._bucket(running / max(len(shoe) / 52.0, 0.5))
+            net_hi = self._play_arm(hi, player, shoe, up, running, b)
+            net_lo = self._play_arm("H", player, shoe, up, running, b)
+            d = net_hi - net_lo
+            sums[b] += d
+            sq[b] += d * d
+            ns[b] += 1
+        out = {}
+        for b in ns:
+            n = ns[b]
+            mean = sums[b] / n
+            var = max(sq[b] / n - mean * mean, 0.0)
+            out[b] = (mean, n, (var / n) ** 0.5)
+        return out
+
+    def report(self, pairs: int = 20_000) -> List[str]:
+        lines = []
+        L = self.learner
+        header = "                 TC " + " ".join(
+            f"{b:>6d}" for b in range(L.tc_min, L.tc_max + 1))
+        lines.append(header + "   (paired dEV, % of a unit)")
+        agree = 0
+        for (total, up), (idx, hi, lo) in sorted(DEVIATIONS.items()):
+            table = self.resolve_cell(total, up, hi, pairs)
+            cells = []
+            flip = None
+            for b in range(L.tc_min, L.tc_max + 1):
+                if b in table:
+                    d, _n, _se = table[b]
+                    cells.append(f"{100*d:+6.2f}")
+                    if flip is None and d > 0 and all(
+                            table[b2][0] > 0 for b2 in table if b2 >= b):
+                        flip = b
+                else:
+                    cells.append("     .")
+            if flip is not None:
+                d, _n, se = table[flip]
+                sig = "" if d >= 2 * se else "?"    # thin gap: not yet resolved
+                learned = f"flip {flip:+d}{sig}"
+            else:
+                learned = "no flip"
+            mark = ""
+            if flip is not None and abs(flip - idx) <= 1:
+                agree += 1
+                mark = "  *"
+            lines.append(f"hard {total:2d} vs {up:2d}: " + " ".join(cells)
+                         + f"   book {idx:+d}, {learned}{mark}")
+        lines.append(f"\n{agree}/{len(DEVIATIONS)} indices within one bucket"
+                     " of book (*); '?' = zero-crossing thinner than 2 SE,"
+                     " raise --refine-pairs to resolve")
+        return lines

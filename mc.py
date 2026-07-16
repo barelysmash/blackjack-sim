@@ -172,6 +172,15 @@ def cmd_learn_deviations(args) -> None:
     print("\nNote: doubling indices (9v2, 10vT, 11vA, ...) and negative-index")
     print("stands are the slowest to resolve; disagreements at low n are")
     print("sampling noise, not engine error. More episodes tightens them.")
+    if args.refine_pairs > 0:
+        from blackjack.learn import IndexResolver
+        print(f"\nrefinement pass: paired greedy evaluation "
+              f"({args.refine_pairs:,} pairs/cell-bucket)...")
+        t1 = time.time()
+        resolver = IndexResolver(learner)
+        for line in resolver.report(pairs=args.refine_pairs):
+            print(line)
+        print(f"refinement took {time.time()-t1:.0f}s")
 
 
 def main() -> None:
@@ -219,6 +228,9 @@ def main() -> None:
     pd = sub.add_parser("learn-deviations",
                         help="learn Illustrious 18 index plays from scratch")
     pd.add_argument("--episodes", type=int, default=20_000_000)
+    pd.add_argument("--refine-pairs", type=int, default=20_000,
+                    help="paired greedy-evaluation samples per cell-bucket "
+                         "after training (0 to disable)")
     pd.set_defaults(func=cmd_learn_deviations)
 
     args = p.parse_args()
