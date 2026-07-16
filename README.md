@@ -35,6 +35,12 @@ python mc.py --seed 42 simulate --shoes 3000 --bet kelly --deviations \
 python tests/test_core.py
 ```
 
+```bash
+# MIT team structure: 4 spotters flat-betting, one Big Player called in hot
+python mc.py --seed 42 team --ticks 100000 --tables 4 --bps 1 --call-in 2 \
+    --bankroll 100000 --plot team.svg
+```
+
 ## Layout
 
 ```
@@ -47,6 +53,7 @@ blackjack/
   engine.py     print-free simulation loop, per-round records
   stats.py      EV, variance, edge-by-TC, risk of ruin, Kelly ramp fit
   learn.py      MC control (learn strategy) + bet-ramp estimation
+  team.py       spotters + Big Player(s), shared bankroll, call-in/leave
   plot.py       bankroll trajectory -> CSV / stdlib SVG chart
 mc.py           CLI: simulate | compare | learn-strategy | learn-betting
 legacy/BJ.py    original simulator, kept for reference
@@ -104,6 +111,14 @@ tests/          sanity tests (hand math, indices, known-edge check)
 | Spread 1-12, no deviations             | ~ +0.5 to +1.0%    |
 | Spread 1-12 + I18 + wong out at TC<-1  | ~ +1.0 to +1.5%    |
 | H17 rule change (vs S17 baseline)      | ~ -0.25% penalty   |
+| Team: 4 tables + 1 BP (BP action only) | ~ +3% of BP action |
+
+The team simulation charges the spotters' flat-bet grind (~-0.5% of their
+action) against the shared bankroll and lets the Big Player play only
+called-in shoes with Kelly sizing on the team roll — the bet-to-count
+correlation that identifies a solo counter never appears on any one seat.
+Same seed comparison: solo Kelly counter ~2.8% risk of ruin; the team,
+with its diversified income across tables, ~0.1%.
 
 `BasicStrategy(h17=True)` applies the standard H17 chart changes (11 vs A
 double, soft 18 vs 2 double, soft 19 vs 6 double); `compare` runs both

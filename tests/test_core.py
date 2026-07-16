@@ -123,6 +123,27 @@ def test_index_resolver_smoke():
         assert -2.0 <= mean <= 2.0 and n > 0 and se >= 0
 
 
+def test_team_smoke():
+    from blackjack.team import TeamSimulator
+    team = TeamSimulator(Rules(), num_tables=3, num_bps=1,
+                         call_in_tc=2.0, leave_tc=1.0, seed=4)
+    res = team.run(3_000, bankroll=1e8, spotter_bet=25.0)
+    assert res.ticks == 3_000
+    assert res.spotter_rounds == 3 * 3_000
+    assert 0.0 < res.bp_utilization < 1.0          # called in sometimes
+    assert res.call_ins > 0 and res.bp_rounds > 0
+    assert res.records[-1].bankroll == 1e8 + res.team_net
+
+
+def test_team_leave_le_call_in():
+    from blackjack.team import TeamSimulator
+    try:
+        TeamSimulator(Rules(), call_in_tc=1.0, leave_tc=2.0)
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

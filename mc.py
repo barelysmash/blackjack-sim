@@ -183,6 +183,57 @@ def cmd_learn_deviations(args) -> None:
         print(f"refinement took {time.time()-t1:.0f}s")
 
 
+def cmd_team(args) -> None:
+    from blackjack.betting import KellyBet, SpreadBet
+    from blackjack.stats import risk_of_ruin
+    from blackjack.team import TeamSimulator
+
+    if args.bet == "kelly":
+        bp_bet = KellyBet(fraction=0.5, max_units=args.max_units)
+    else:
+        bp_bet = SpreadBet()
+    team = TeamSimulator(
+        _rules(args), num_tables=args.tables, num_bps=args.bps,
+        call_in_tc=args.call_in, leave_tc=args.leave,
+        bp_betting=bp_bet, seed=args.seed)
+    t0 = time.time()
+    res = team.run(args.ticks, bankroll=args.bankroll,
+                   spotter_bet=args.min_bet)
+    dt = time.time() - t0
+
+    n = res.ticks
+    print(f"ticks (rounds/table) {n:,}   tables {args.tables}   BPs {args.bps}"
+          f"   in {dt:.1f}s")
+    print(f"call-ins             {res.call_ins:,}  "
+          f"(BP utilization {100*res.bp_utilization:.1f}% of ticks)")
+    se = 0.0
+    if res.records:
+        nets = [r.net for r in res.records]
+        mean = sum(nets) / n
+        var = sum((x - mean) ** 2 for x in nets) / max(n - 1, 1)
+        se = (var / n) ** 0.5
+        sp_edge = 100 * res.spotter_net / max(res.spotter_action, 1)
+        bp_edge = 100 * res.bp_net / max(res.bp_action, 1)
+        print(f"spotter grind        {res.spotter_rounds:,} rounds, "
+              f"net ${res.spotter_net:,.0f} ({sp_edge:+.2f}% of action)")
+        print(f"BP hands             {res.bp_rounds:,} rounds, "
+              f"net ${res.bp_net:,.0f} ({bp_edge:+.2f}% of action), "
+              f"avg bet ${res.bp_action/max(res.bp_rounds,1):,.0f}")
+        print(f"team net             ${res.team_net:,.0f}"
+              + ("  ** RUINED **" if res.ruined else ""))
+        print(f"EV/tick              ${mean:+.2f} (± {1.96*se:.2f} at 95%)")
+        ror = risk_of_ruin(mean, var ** 0.5, args.bankroll)
+        print(f"team risk of ruin    {100*ror:.1f}% (diffusion approx, "
+              f"${args.bankroll:,.0f} bankroll)")
+        print(f"final bankroll       ${res.records[-1].bankroll:,.0f}")
+        if args.plot:
+            write_svg(res.records, args.plot,
+                      title=f"Team bankroll — {args.tables} tables, "
+                            f"{args.bps} BP, call-in TC {args.call_in:+g}",
+                      start_bankroll=args.bankroll)
+            print(f"wrote {args.plot}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -232,6 +283,20 @@ def main() -> None:
                     help="paired greedy-evaluation samples per cell-bucket "
                          "after training (0 to disable)")
     pd.set_defaults(func=cmd_learn_deviations)
+
+    pt = sub.add_parser("team", help="MIT-style team: spotters + Big Player(s)")
+    pt.add_argument("--ticks", type=int, default=100_000,
+                    help="rounds dealt per table")
+    pt.add_argument("--tables", type=int, default=4)
+    pt.add_argument("--bps", type=int, default=1)
+    pt.add_argument("--call-in", type=float, default=2.0)
+    pt.add_argument("--leave", type=float, default=1.0)
+    pt.add_argument("--bankroll", type=float, default=100_000)
+    pt.add_argument("--min-bet", type=float, default=25)
+    pt.add_argument("--bet", choices=["kelly", "spread"], default="kelly")
+    pt.add_argument("--max-units", type=float, default=20)
+    pt.add_argument("--plot", type=str, default=None)
+    pt.set_defaults(func=cmd_team)
 
     args = p.parse_args()
     args.func(args)
